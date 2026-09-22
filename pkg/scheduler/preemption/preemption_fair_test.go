@@ -1196,6 +1196,297 @@ func TestFairPreemptions(t *testing.T) {
 			),
 			featureGates: map[featuregate.Feature]bool{features.FairSharingReevaluatePreemptionCandidates: true},
 		},
+		"Scenario A (issue 14543): keep same-CQ victim when restoring it invalidates cross-CQ victim (reevaluate=false, withinNominal=true)": {
+			clusterQueues: []*kueue.ClusterQueue{
+				utiltestingapi.MakeClusterQueue("a").
+					Cohort("all").
+					ResourceGroup(*utiltestingapi.MakeFlavorQuotas("default").
+						Resource(corev1.ResourceCPU, "50").Obj()).
+					Preemption(kueue.ClusterQueuePreemption{
+						WithinClusterQueue:  kueue.PreemptionPolicyLowerPriority,
+						ReclaimWithinCohort: kueue.PreemptionPolicyAny,
+					}).
+					Obj(),
+				utiltestingapi.MakeClusterQueue("b").
+					Cohort("all").
+					ResourceGroup(*utiltestingapi.MakeFlavorQuotas("default").
+						Resource(corev1.ResourceCPU, "50").Obj()).
+					Preemption(kueue.ClusterQueuePreemption{
+						WithinClusterQueue:  kueue.PreemptionPolicyLowerPriority,
+						ReclaimWithinCohort: kueue.PreemptionPolicyAny,
+					}).
+					Obj(),
+			},
+			admitted: []kueue.Workload{
+				*utiltestingapi.MakeWorkload("a1", "").Priority(0).Request(corev1.ResourceCPU, "30").SimpleReserveQuota("a", "default", now).Obj(),
+				*utiltestingapi.MakeWorkload("b1", "").Priority(0).Request(corev1.ResourceCPU, "70").SimpleReserveQuota("b", "default", now).Obj(),
+			},
+			incoming: utiltestingapi.MakeWorkload("a2", "").Priority(10).Request(corev1.ResourceCPU, "60").Obj(),
+			targetCQ: "a",
+			wantPreempted: sets.New(
+				targetKeyReason("/a1", kueue.InClusterQueueReason),
+				targetKeyReason("/b1", kueue.InCohortFairSharingReason),
+			),
+			featureGates: map[featuregate.Feature]bool{
+				features.FairSharingPreemptWithinNominal:           true,
+				features.FairSharingReevaluatePreemptionCandidates: false,
+			},
+		},
+		"Scenario A (issue 14543): keep same-CQ victim when restoring it invalidates cross-CQ victim (reevaluate=true, withinNominal=true)": {
+			clusterQueues: []*kueue.ClusterQueue{
+				utiltestingapi.MakeClusterQueue("a").
+					Cohort("all").
+					ResourceGroup(*utiltestingapi.MakeFlavorQuotas("default").
+						Resource(corev1.ResourceCPU, "50").Obj()).
+					Preemption(kueue.ClusterQueuePreemption{
+						WithinClusterQueue:  kueue.PreemptionPolicyLowerPriority,
+						ReclaimWithinCohort: kueue.PreemptionPolicyAny,
+					}).
+					Obj(),
+				utiltestingapi.MakeClusterQueue("b").
+					Cohort("all").
+					ResourceGroup(*utiltestingapi.MakeFlavorQuotas("default").
+						Resource(corev1.ResourceCPU, "50").Obj()).
+					Preemption(kueue.ClusterQueuePreemption{
+						WithinClusterQueue:  kueue.PreemptionPolicyLowerPriority,
+						ReclaimWithinCohort: kueue.PreemptionPolicyAny,
+					}).
+					Obj(),
+			},
+			admitted: []kueue.Workload{
+				*utiltestingapi.MakeWorkload("a1", "").Priority(0).Request(corev1.ResourceCPU, "30").SimpleReserveQuota("a", "default", now).Obj(),
+				*utiltestingapi.MakeWorkload("b1", "").Priority(0).Request(corev1.ResourceCPU, "70").SimpleReserveQuota("b", "default", now).Obj(),
+			},
+			incoming: utiltestingapi.MakeWorkload("a2", "").Priority(10).Request(corev1.ResourceCPU, "60").Obj(),
+			targetCQ: "a",
+			wantPreempted: sets.New(
+				targetKeyReason("/a1", kueue.InClusterQueueReason),
+				targetKeyReason("/b1", kueue.InCohortFairSharingReason),
+			),
+			featureGates: map[featuregate.Feature]bool{
+				features.FairSharingPreemptWithinNominal:           true,
+				features.FairSharingReevaluatePreemptionCandidates: true,
+			},
+		},
+		"Scenario A (issue 14543): keep same-CQ victim when restoring it invalidates cross-CQ victim (reevaluate=false, withinNominal=false)": {
+			clusterQueues: []*kueue.ClusterQueue{
+				utiltestingapi.MakeClusterQueue("a").
+					Cohort("all").
+					ResourceGroup(*utiltestingapi.MakeFlavorQuotas("default").
+						Resource(corev1.ResourceCPU, "50").Obj()).
+					Preemption(kueue.ClusterQueuePreemption{
+						WithinClusterQueue:  kueue.PreemptionPolicyLowerPriority,
+						ReclaimWithinCohort: kueue.PreemptionPolicyAny,
+					}).
+					Obj(),
+				utiltestingapi.MakeClusterQueue("b").
+					Cohort("all").
+					ResourceGroup(*utiltestingapi.MakeFlavorQuotas("default").
+						Resource(corev1.ResourceCPU, "50").Obj()).
+					Preemption(kueue.ClusterQueuePreemption{
+						WithinClusterQueue:  kueue.PreemptionPolicyLowerPriority,
+						ReclaimWithinCohort: kueue.PreemptionPolicyAny,
+					}).
+					Obj(),
+			},
+			admitted: []kueue.Workload{
+				*utiltestingapi.MakeWorkload("a1", "").Priority(0).Request(corev1.ResourceCPU, "30").SimpleReserveQuota("a", "default", now).Obj(),
+				*utiltestingapi.MakeWorkload("b1", "").Priority(0).Request(corev1.ResourceCPU, "70").SimpleReserveQuota("b", "default", now).Obj(),
+			},
+			incoming: utiltestingapi.MakeWorkload("a2", "").Priority(10).Request(corev1.ResourceCPU, "60").Obj(),
+			targetCQ: "a",
+			wantPreempted: sets.New(
+				targetKeyReason("/a1", kueue.InClusterQueueReason),
+				targetKeyReason("/b1", kueue.InCohortFairSharingReason),
+			),
+			featureGates: map[featuregate.Feature]bool{
+				features.FairSharingPreemptWithinNominal:           false,
+				features.FairSharingReevaluatePreemptionCandidates: false,
+			},
+		},
+		"Scenario A (issue 14543): keep same-CQ victim when restoring it invalidates cross-CQ victim (reevaluate=true, withinNominal=false)": {
+			clusterQueues: []*kueue.ClusterQueue{
+				utiltestingapi.MakeClusterQueue("a").
+					Cohort("all").
+					ResourceGroup(*utiltestingapi.MakeFlavorQuotas("default").
+						Resource(corev1.ResourceCPU, "50").Obj()).
+					Preemption(kueue.ClusterQueuePreemption{
+						WithinClusterQueue:  kueue.PreemptionPolicyLowerPriority,
+						ReclaimWithinCohort: kueue.PreemptionPolicyAny,
+					}).
+					Obj(),
+				utiltestingapi.MakeClusterQueue("b").
+					Cohort("all").
+					ResourceGroup(*utiltestingapi.MakeFlavorQuotas("default").
+						Resource(corev1.ResourceCPU, "50").Obj()).
+					Preemption(kueue.ClusterQueuePreemption{
+						WithinClusterQueue:  kueue.PreemptionPolicyLowerPriority,
+						ReclaimWithinCohort: kueue.PreemptionPolicyAny,
+					}).
+					Obj(),
+			},
+			admitted: []kueue.Workload{
+				*utiltestingapi.MakeWorkload("a1", "").Priority(0).Request(corev1.ResourceCPU, "30").SimpleReserveQuota("a", "default", now).Obj(),
+				*utiltestingapi.MakeWorkload("b1", "").Priority(0).Request(corev1.ResourceCPU, "70").SimpleReserveQuota("b", "default", now).Obj(),
+			},
+			incoming: utiltestingapi.MakeWorkload("a2", "").Priority(10).Request(corev1.ResourceCPU, "60").Obj(),
+			targetCQ: "a",
+			wantPreempted: sets.New(
+				targetKeyReason("/a1", kueue.InClusterQueueReason),
+				targetKeyReason("/b1", kueue.InCohortFairSharingReason),
+			),
+			featureGates: map[featuregate.Feature]bool{
+				features.FairSharingPreemptWithinNominal:           false,
+				features.FairSharingReevaluatePreemptionCandidates: true,
+			},
+		},
+		"Scenario A hierarchical: queues in different sub-cohorts keep same-CQ victim": {
+			clusterQueues: []*kueue.ClusterQueue{
+				utiltestingapi.MakeClusterQueue("a").
+					Cohort("sub-a").
+					ResourceGroup(*utiltestingapi.MakeFlavorQuotas("default").
+						Resource(corev1.ResourceCPU, "0").Obj()).
+					Preemption(kueue.ClusterQueuePreemption{
+						WithinClusterQueue:  kueue.PreemptionPolicyLowerPriority,
+						ReclaimWithinCohort: kueue.PreemptionPolicyAny,
+					}).
+					Obj(),
+				utiltestingapi.MakeClusterQueue("b").
+					Cohort("sub-b").
+					ResourceGroup(*utiltestingapi.MakeFlavorQuotas("default").
+						Resource(corev1.ResourceCPU, "0").Obj()).
+					Preemption(kueue.ClusterQueuePreemption{
+						WithinClusterQueue:  kueue.PreemptionPolicyLowerPriority,
+						ReclaimWithinCohort: kueue.PreemptionPolicyAny,
+					}).
+					Obj(),
+			},
+			cohorts: []*kueue.Cohort{
+				utiltestingapi.MakeCohort("root").Obj(),
+				utiltestingapi.MakeCohort("sub-a").
+					Parent("root").
+					FairWeight(resource.MustParse("1")).
+					ResourceGroup(*utiltestingapi.MakeFlavorQuotas("default").
+						Resource(corev1.ResourceCPU, "50").Obj()).
+					Obj(),
+				utiltestingapi.MakeCohort("sub-b").
+					Parent("root").
+					FairWeight(resource.MustParse("1")).
+					ResourceGroup(*utiltestingapi.MakeFlavorQuotas("default").
+						Resource(corev1.ResourceCPU, "50").Obj()).
+					Obj(),
+			},
+			admitted: []kueue.Workload{
+				*utiltestingapi.MakeWorkload("a1", "").Priority(0).Request(corev1.ResourceCPU, "30").SimpleReserveQuota("a", "default", now).Obj(),
+				*utiltestingapi.MakeWorkload("b1", "").Priority(0).Request(corev1.ResourceCPU, "70").SimpleReserveQuota("b", "default", now).Obj(),
+			},
+			incoming: utiltestingapi.MakeWorkload("a2", "").Priority(10).Request(corev1.ResourceCPU, "60").Obj(),
+			targetCQ: "a",
+			wantPreempted: sets.New(
+				targetKeyReason("/a1", kueue.InClusterQueueReason),
+				targetKeyReason("/b1", kueue.InCohortFairSharingReason),
+			),
+			featureGates: map[featuregate.Feature]bool{
+				features.FairSharingPreemptWithinNominal:           true,
+				features.FairSharingReevaluatePreemptionCandidates: true,
+			},
+		},
+		"within-nominal fill-back: keep same-CQ victim when restoring it invalidates within-nominal cross-CQ victim": {
+			clusterQueues: []*kueue.ClusterQueue{
+				utiltestingapi.MakeClusterQueue("a").
+					Cohort("all").
+					ResourceGroup(*utiltestingapi.MakeFlavorQuotas("default").
+						Resource(corev1.ResourceCPU, "50").Obj()).
+					Preemption(kueue.ClusterQueuePreemption{
+						WithinClusterQueue:  kueue.PreemptionPolicyLowerPriority,
+						ReclaimWithinCohort: kueue.PreemptionPolicyAny,
+					}).
+					Obj(),
+				utiltestingapi.MakeClusterQueue("b").
+					Cohort("all").
+					ResourceGroup(*utiltestingapi.MakeFlavorQuotas("default").
+						Resource(corev1.ResourceCPU, "50").Obj()).
+					Preemption(kueue.ClusterQueuePreemption{
+						WithinClusterQueue:  kueue.PreemptionPolicyLowerPriority,
+						ReclaimWithinCohort: kueue.PreemptionPolicyAny,
+					}).
+					Obj(),
+			},
+			admitted: []kueue.Workload{
+				*utiltestingapi.MakeWorkload("a1", "").Priority(0).Request(corev1.ResourceCPU, "30").SimpleReserveQuota("a", "default", now).Obj(),
+				*utiltestingapi.MakeWorkload("b1", "").Priority(0).Request(corev1.ResourceCPU, "70").SimpleReserveQuota("b", "default", now).Obj(),
+			},
+			incoming: utiltestingapi.MakeWorkload("a2", "").Priority(10).Request(corev1.ResourceCPU, "35").Obj(),
+			targetCQ: "a",
+			wantPreempted: sets.New(
+				targetKeyReason("/a1", kueue.InClusterQueueReason),
+				targetKeyReason("/b1", kueue.InCohortReclamationReason),
+			),
+			featureGates: map[featuregate.Feature]bool{
+				features.FairSharingPreemptWithinNominal:           true,
+				features.FairSharingReevaluatePreemptionCandidates: true,
+			},
+		},
+		"S2-a non-strict bound fill-back: keep same-CQ victim when restoring it invalidates S2-a cross-CQ victim": {
+			clusterQueues: []*kueue.ClusterQueue{
+				utiltestingapi.MakeClusterQueue("a").
+					Cohort("all").
+					ResourceGroup(*utiltestingapi.MakeFlavorQuotas("default").
+						Resource(corev1.ResourceCPU, "50").Obj()).
+					Preemption(kueue.ClusterQueuePreemption{
+						WithinClusterQueue:  kueue.PreemptionPolicyLowerPriority,
+						ReclaimWithinCohort: kueue.PreemptionPolicyAny,
+					}).
+					Obj(),
+				utiltestingapi.MakeClusterQueue("b").
+					Cohort("all").
+					ResourceGroup(*utiltestingapi.MakeFlavorQuotas("default").
+						Resource(corev1.ResourceCPU, "50").Obj()).
+					Preemption(kueue.ClusterQueuePreemption{
+						WithinClusterQueue:  kueue.PreemptionPolicyLowerPriority,
+						ReclaimWithinCohort: kueue.PreemptionPolicyAny,
+					}).
+					Obj(),
+			},
+			admitted: []kueue.Workload{
+				*utiltestingapi.MakeWorkload("a1", "").Priority(0).Request(corev1.ResourceCPU, "25").SimpleReserveQuota("a", "default", now).Obj(),
+				*utiltestingapi.MakeWorkload("b1", "").Priority(0).Request(corev1.ResourceCPU, "35").SimpleReserveQuota("b", "default", now).Obj(),
+				*utiltestingapi.MakeWorkload("b2", "").Priority(10).Request(corev1.ResourceCPU, "35").SimpleReserveQuota("b", "default", now).Obj(),
+			},
+			incoming: utiltestingapi.MakeWorkload("a2", "").Priority(10).Request(corev1.ResourceCPU, "35").Obj(),
+			targetCQ: "a",
+			wantPreempted: sets.New(
+				targetKeyReason("/a1", kueue.InClusterQueueReason),
+				targetKeyReason("/b1", kueue.InCohortFairSharingReason),
+			),
+			featureGates: map[featuregate.Feature]bool{
+				features.FairSharingPreemptWithinNominal:           false,
+				features.FairSharingReevaluatePreemptionCandidates: true,
+			},
+		},
+		"preserve selection order within ClusterQueue during fill-back": {
+			clusterQueues: []*kueue.ClusterQueue{
+				utiltestingapi.MakeClusterQueue("a").
+					Cohort("all").
+					ResourceGroup(*utiltestingapi.MakeFlavorQuotas("default").
+						Resource(corev1.ResourceCPU, "100").Obj()).
+					Preemption(kueue.ClusterQueuePreemption{
+						WithinClusterQueue:  kueue.PreemptionPolicyLowerPriority,
+						ReclaimWithinCohort: kueue.PreemptionPolicyAny,
+					}).
+					Obj(),
+			},
+			admitted: []kueue.Workload{
+				*utiltestingapi.MakeWorkload("a1", "").Priority(0).Request(corev1.ResourceCPU, "10").SimpleReserveQuota("a", "default", now).Obj(),
+				*utiltestingapi.MakeWorkload("a2", "").Priority(5).Request(corev1.ResourceCPU, "50").SimpleReserveQuota("a", "default", now).Obj(),
+			},
+			incoming: utiltestingapi.MakeWorkload("a_incoming", "").Priority(10).Request(corev1.ResourceCPU, "55").Obj(),
+			targetCQ: "a",
+			wantPreempted: sets.New(
+				targetKeyReason("/a1", kueue.InClusterQueueReason),
+				targetKeyReason("/a2", kueue.InClusterQueueReason),
+			),
+		},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -1401,5 +1692,189 @@ func TestFairPreemptionSkipsUnsatisfiableTournament(t *testing.T) {
 					skippedQueues, tc.wantSkippedQueues)
 			}
 		})
+	}
+}
+
+func TestFairPreemptionsNoOscillationThreeCycles(t *testing.T) {
+	now := time.Now()
+	assignment := singlePodSetAssignment(
+		flavorassigner.ResourceAssignment{
+			corev1.ResourceCPU: &flavorassigner.FlavorAssignment{
+				Name: "default", Mode: flavorassigner.Preempt,
+			},
+		},
+	)
+
+	topologies := map[string]struct {
+		clusterQueues []*kueue.ClusterQueue
+		cohorts       []*kueue.Cohort
+	}{
+		"flat cohort": {
+			clusterQueues: []*kueue.ClusterQueue{
+				utiltestingapi.MakeClusterQueue("a").
+					Cohort("all").
+					ResourceGroup(*utiltestingapi.MakeFlavorQuotas("default").
+						Resource(corev1.ResourceCPU, "50").Obj()).
+					Preemption(kueue.ClusterQueuePreemption{
+						WithinClusterQueue:  kueue.PreemptionPolicyLowerPriority,
+						ReclaimWithinCohort: kueue.PreemptionPolicyAny,
+					}).
+					Obj(),
+				utiltestingapi.MakeClusterQueue("b").
+					Cohort("all").
+					ResourceGroup(*utiltestingapi.MakeFlavorQuotas("default").
+						Resource(corev1.ResourceCPU, "50").Obj()).
+					Preemption(kueue.ClusterQueuePreemption{
+						WithinClusterQueue:  kueue.PreemptionPolicyLowerPriority,
+						ReclaimWithinCohort: kueue.PreemptionPolicyAny,
+					}).
+					Obj(),
+			},
+		},
+		"hierarchical sub-cohorts": {
+			clusterQueues: []*kueue.ClusterQueue{
+				utiltestingapi.MakeClusterQueue("a").
+					Cohort("sub-a").
+					ResourceGroup(*utiltestingapi.MakeFlavorQuotas("default").
+						Resource(corev1.ResourceCPU, "0").Obj()).
+					Preemption(kueue.ClusterQueuePreemption{
+						WithinClusterQueue:  kueue.PreemptionPolicyLowerPriority,
+						ReclaimWithinCohort: kueue.PreemptionPolicyAny,
+					}).
+					Obj(),
+				utiltestingapi.MakeClusterQueue("b").
+					Cohort("sub-b").
+					ResourceGroup(*utiltestingapi.MakeFlavorQuotas("default").
+						Resource(corev1.ResourceCPU, "0").Obj()).
+					Preemption(kueue.ClusterQueuePreemption{
+						WithinClusterQueue:  kueue.PreemptionPolicyLowerPriority,
+						ReclaimWithinCohort: kueue.PreemptionPolicyAny,
+					}).
+					Obj(),
+			},
+			cohorts: []*kueue.Cohort{
+				utiltestingapi.MakeCohort("root").Obj(),
+				utiltestingapi.MakeCohort("sub-a").
+					Parent("root").
+					FairWeight(resource.MustParse("1")).
+					ResourceGroup(*utiltestingapi.MakeFlavorQuotas("default").
+						Resource(corev1.ResourceCPU, "50").Obj()).
+					Obj(),
+				utiltestingapi.MakeCohort("sub-b").
+					Parent("root").
+					FairWeight(resource.MustParse("1")).
+					ResourceGroup(*utiltestingapi.MakeFlavorQuotas("default").
+						Resource(corev1.ResourceCPU, "50").Obj()).
+					Obj(),
+			},
+		},
+	}
+
+	fgCombinations := []struct {
+		name         string
+		featureGates map[featuregate.Feature]bool
+	}{
+		{
+			name: "reevaluate=false,withinNominal=false",
+			featureGates: map[featuregate.Feature]bool{
+				features.FairSharingPreemptWithinNominal:           false,
+				features.FairSharingReevaluatePreemptionCandidates: false,
+			},
+		},
+		{
+			name: "reevaluate=true,withinNominal=false",
+			featureGates: map[featuregate.Feature]bool{
+				features.FairSharingPreemptWithinNominal:           false,
+				features.FairSharingReevaluatePreemptionCandidates: true,
+			},
+		},
+		{
+			name: "reevaluate=false,withinNominal=true",
+			featureGates: map[featuregate.Feature]bool{
+				features.FairSharingPreemptWithinNominal:           true,
+				features.FairSharingReevaluatePreemptionCandidates: false,
+			},
+		},
+		{
+			name: "reevaluate=true,withinNominal=true",
+			featureGates: map[featuregate.Feature]bool{
+				features.FairSharingPreemptWithinNominal:           true,
+				features.FairSharingReevaluatePreemptionCandidates: true,
+			},
+		},
+	}
+
+	for topoName, topo := range topologies {
+		for _, fg := range fgCombinations {
+			t.Run(topoName+"/"+fg.name, func(t *testing.T) {
+				features.SetFeatureGatesDuringTest(t, fg.featureGates)
+				ctx, log := utiltesting.ContextWithLog(t)
+
+				buildSnapshot := func(admitted []kueue.Workload) (*schdcache.Snapshot, *Preemptor) {
+					for i := range admitted {
+						admitted[i].UID = types.UID(admitted[i].Name)
+					}
+					cl := utiltesting.NewClientBuilder().
+						WithLists(&kueue.WorkloadList{Items: admitted}).
+						Build()
+					cqCache := schdcache.New(cl)
+					cqCache.AddOrUpdateResourceFlavor(log, utiltestingapi.MakeResourceFlavor("default").Obj())
+					for _, cq := range topo.clusterQueues {
+						if err := cqCache.AddClusterQueue(ctx, cq); err != nil {
+							t.Fatalf("Couldn't add ClusterQueue to cache: %v", err)
+						}
+					}
+					for _, cohort := range topo.cohorts {
+						if err := cqCache.AddOrUpdateCohort(cohort); err != nil {
+							t.Fatalf("Couldn't add Cohort to cache: %v", err)
+						}
+					}
+					snap, err := cqCache.Snapshot(ctx)
+					if err != nil {
+						t.Fatalf("unexpected error while building snapshot: %v", err)
+					}
+					preemptor := New(cl, workload.Ordering{}, &utiltesting.EventRecorder{}, &config.FairSharing{},
+						false, clocktesting.NewFakeClock(now), nil, preemptexpectations.New(), nil)
+					return snap, preemptor
+				}
+
+				a1 := *utiltestingapi.MakeWorkload("a1", "").Priority(0).Request(corev1.ResourceCPU, "30").SimpleReserveQuota("a", "default", now).Obj()
+				b1 := *utiltestingapi.MakeWorkload("b1", "").Priority(0).Request(corev1.ResourceCPU, "70").SimpleReserveQuota("b", "default", now).Obj()
+				a2Admitted := *utiltestingapi.MakeWorkload("a2", "").Priority(10).Request(corev1.ResourceCPU, "60").SimpleReserveQuota("a", "default", now).Obj()
+
+				// Cycle 1: a1 (30) and b1 (70) are admitted; higher-priority a2 (60) arrives in "a".
+				snap1, preemptor1 := buildSnapshot([]kueue.Workload{a1, b1})
+				a2Incoming := workload.NewInfo(log, utiltestingapi.MakeWorkload("a2", "").Priority(10).Request(corev1.ResourceCPU, "60").Obj())
+				a2Incoming.ClusterQueue = "a"
+				cycle1Targets := preemptor1.GetTargets(ctx, *a2Incoming, assignment, snap1)
+				gotCycle1 := sets.New(utilslices.Map(cycle1Targets, func(t **Target) string {
+					return targetKeyReason(workload.Key((*t).WorkloadInfo.Obj), (*t).Reason)
+				})...)
+				wantCycle1 := sets.New(
+					targetKeyReason("/a1", kueue.InClusterQueueReason),
+					targetKeyReason("/b1", kueue.InCohortFairSharingReason),
+				)
+				if diff := cmp.Diff(wantCycle1, gotCycle1); diff != "" {
+					t.Fatalf("Cycle 1 targets mismatch (-want,+got):\n%s", diff)
+				}
+
+				// Cycle 2: a1 and b1 were evicted and a2 (60) is now admitted in "a".
+				// Reclaimed queue "b" retries b1 (70) — must get NO targets.
+				snap2, preemptor2 := buildSnapshot([]kueue.Workload{a2Admitted})
+				b1Retry := workload.NewInfo(log, utiltestingapi.MakeWorkload("b1", "").Priority(0).Request(corev1.ResourceCPU, "70").Obj())
+				b1Retry.ClusterQueue = "b"
+				if got := preemptor2.GetTargets(ctx, *b1Retry, assignment, snap2); len(got) != 0 {
+					t.Fatalf("Cycle 2: expected reclaimed queue 'b' to get no targets, got %v", got)
+				}
+
+				// Cycle 3: a1 (30, p=0) re-admits into the 40 idle CPUs alongside a2 (60, p=10),
+				// bringing "a" back to 90 CPU (DRS=0.40). Reclaimed queue "b" retries b1 (70, p=0, DRS=0.20) —
+				// must still get NO targets.
+				snap3, preemptor3 := buildSnapshot([]kueue.Workload{a1, a2Admitted})
+				if got := preemptor3.GetTargets(ctx, *b1Retry, assignment, snap3); len(got) != 0 {
+					t.Fatalf("Cycle 3: expected reclaimed queue 'b' to get no targets after a1 re-admission, got %v", got)
+				}
+			})
+		}
 	}
 }

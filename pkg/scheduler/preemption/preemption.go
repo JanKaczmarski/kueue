@@ -116,6 +116,10 @@ type Target struct {
 	WorkloadInfo *workload.Info
 	Reason       string
 	WorkloadCq   *schdcache.ClusterQueueSnapshot
+
+	strategy       fairsharing.Strategy
+	targetOldShare fairsharing.TargetOldShare
+	targetNewShare fairsharing.TargetNewShare
 }
 
 // ensures that Target implements ObjectRefProvider interface at compile time
@@ -352,6 +356,100 @@ func fillBackWorkloads(preemptionCtx *preemptionCtx, targets []*Target, allowBor
 	return targets
 }
 
+func hasLaterPoppedEvictedTarget(preemptionCtx *preemptionCtx, targets []*Target, idx int) bool {
+	cq := targets[idx].WorkloadInfo.ClusterQueue
+	idxPriority := priority.EffectivePriority(preemptionCtx.log, targets[idx].WorkloadInfo.Obj)
+	for j := idx + 1; j < len(targets); j++ {
+		if targets[j].WorkloadInfo.ClusterQueue == cq {
+			jPriority := priority.EffectivePriority(preemptionCtx.log, targets[j].WorkloadInfo.Obj)
+			if jPriority > idxPriority {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+type drsProvider interface {
+	DominantResourceShare() schdcache.DRS
+}
+
+func almostLCAs(preemptorCQ, targetCQ *schdcache.ClusterQueueSnapshot) (drsProvider, drsProvider) {
+	preemptorAncestors := sets.New[*schdcache.CohortSnapshot]()
+	for ancestor := range preemptorCQ.PathParentToRoot() {
+		preemptorAncestors.Insert(ancestor)
+	}
+	var lca *schdcache.CohortSnapshot
+	for ancestor := range targetCQ.PathParentToRoot() {
+		if preemptorAncestors.Has(ancestor) {
+			lca = ancestor
+			break
+		}
+	}
+	if lca == nil {
+		return preemptorCQ, targetCQ
+	}
+	return almostLCAFromCQ(preemptorCQ, lca), almostLCAFromCQ(targetCQ, lca)
+}
+
+func almostLCAFromCQ(cq *schdcache.ClusterQueueSnapshot, lca *schdcache.CohortSnapshot) drsProvider {
+	var aLca drsProvider = cq
+	for ancestor := range cq.PathParentToRoot() {
+		if ancestor == lca {
+			return aLca
+		}
+		aLca = ancestor
+	}
+	return aLca
+}
+
+func satisfiesFairSharingConditionForAllTargets(preemptionCtx *preemptionCtx, targets []*Target, candIdx int) bool {
+	for j, target := range targets {
+		if j == candIdx {
+			continue
+		}
+		if target.WorkloadInfo.ClusterQueue == preemptionCtx.preemptorCQ.Name {
+			continue
+		}
+		if target.WorkloadCq == nil {
+			target.WorkloadCq = preemptionCtx.snapshot.ClusterQueue(target.WorkloadInfo.ClusterQueue)
+		}
+		if target.strategy != nil {
+			preemptorAlmostLCA, _ := almostLCAs(preemptionCtx.preemptorCQ, target.WorkloadCq)
+			preemptorNewShare := fairsharing.PreemptorNewShare(preemptorAlmostLCA.DominantResourceShare())
+			if !target.strategy(preemptorNewShare, target.targetOldShare, target.targetNewShare) {
+				return false
+			}
+		}
+		if target.Reason == kueue.InCohortReclamationReason {
+			if !queueWithinNominalInResourcesNeedingPreemption(preemptionCtx) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func fillBackWorkloadsForFairSharing(preemptionCtx *preemptionCtx, targets []*Target) []*Target {
+	for i := len(targets) - 2; i >= 0; i-- {
+		if hasLaterPoppedEvictedTarget(preemptionCtx, targets, i) {
+			continue
+		}
+		cand := targets[i]
+		preemptionCtx.snapshot.AddWorkload(cand.WorkloadInfo)
+		if !workloadFitsForFairSharing(preemptionCtx) {
+			preemptionCtx.snapshot.RemoveWorkload(cand.WorkloadInfo)
+			continue
+		}
+		if !satisfiesFairSharingConditionForAllTargets(preemptionCtx, targets, i) {
+			preemptionCtx.snapshot.RemoveWorkload(cand.WorkloadInfo)
+			continue
+		}
+		targets = slices.Delete(targets, i, i+1)
+	}
+	return targets
+}
+
 func restoreSnapshot(snapshot *schdcache.Snapshot, targets []*Target) {
 	for _, t := range targets {
 		snapshot.AddWorkload(t.WorkloadInfo)
@@ -406,6 +504,8 @@ func runFirstFsStrategy(preemptionCtx *preemptionCtx, candidates []*workload.Inf
 			if workloadFitsForFairSharing(preemptionCtx) {
 				return true, targets, nil
 			}
+			preemptorWithinNominal = features.Enabled(features.FairSharingPreemptWithinNominal) &&
+				queueWithinNominalInResourcesNeedingPreemption(preemptionCtx)
 			continue
 		}
 
@@ -449,9 +549,12 @@ func runFirstFsStrategy(preemptionCtx *preemptionCtx, candidates []*workload.Inf
 			if passed {
 				preemptionCtx.snapshot.RemoveWorkload(candWl)
 				targets = append(targets, &Target{
-					WorkloadInfo: candWl,
-					Reason:       kueue.InCohortFairSharingReason,
-					WorkloadCq:   candCQ.GetTargetCq(),
+					WorkloadInfo:   candWl,
+					Reason:         kueue.InCohortFairSharingReason,
+					WorkloadCq:     candCQ.GetTargetCq(),
+					strategy:       strategy,
+					targetOldShare: targetOldShare,
+					targetNewShare: targetNewShare,
 				})
 				if workloadFitsForFairSharing(preemptionCtx) {
 					strategyLog.flush()
@@ -517,9 +620,11 @@ func runSecondFsStrategy(retryCandidates []*workload.Info, preemptionCtx *preemp
 		if passed {
 			preemptionCtx.snapshot.RemoveWorkload(candWl)
 			targets = append(targets, &Target{
-				WorkloadInfo: candWl,
-				Reason:       kueue.InCohortFairSharingReason,
-				WorkloadCq:   candCQ.GetTargetCq(),
+				WorkloadInfo:   candWl,
+				Reason:         kueue.InCohortFairSharingReason,
+				WorkloadCq:     candCQ.GetTargetCq(),
+				strategy:       fairsharing.LessThanInitialShare,
+				targetOldShare: targetOldShare,
 			})
 			if workloadFitsForFairSharing(preemptionCtx) {
 				return true, targets
@@ -581,8 +686,8 @@ func (p *Preemptor) fairPreemptions(preemptionCtx *preemptionCtx, strategies []f
 		fits, targets = runSecondFsStrategy(retryCandidates, preemptionCtx, targets)
 	}
 
-	revertSimulation()
 	if !fits {
+		revertSimulation()
 		if logV := preemptionCtx.log.V(6); logV.Enabled() {
 			logV.Info("All fair sharing strategies failed",
 				"preemptingWorkload", klog.KObj(preemptionCtx.preemptor.Obj),
@@ -591,7 +696,8 @@ func (p *Preemptor) fairPreemptions(preemptionCtx *preemptionCtx, strategies []f
 		restoreSnapshot(preemptionCtx.snapshot, targets)
 		return nil
 	}
-	targets = fillBackWorkloads(preemptionCtx, targets, true)
+	targets = fillBackWorkloadsForFairSharing(preemptionCtx, targets)
+	revertSimulation()
 	restoreSnapshot(preemptionCtx.snapshot, targets)
 
 	if logV := preemptionCtx.log.V(6); logV.Enabled() {
