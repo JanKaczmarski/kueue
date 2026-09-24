@@ -555,6 +555,22 @@ func (p *Preemptor) fairPreemptions(preemptionCtx *preemptionCtx, strategies []f
 	// DRS values must include incoming workload.
 	revertSimulation := preemptionCtx.preemptorCQ.SimulateUsageAddition(preemptionCtx.workloadUsage)
 
+	// Trivial solution: Compute initial DRSs of workloads
+	ordering := fairsharing.MakeClusterQueueOrdering(preemptionCtx.preemptorCQ, candidates, preemptionCtx.log, preemptionCtx.clock)
+	candCQs := make(map[kueue.ClusterQueueReference]*fairsharing.TargetClusterQueue)
+	candDRSBefore := make(map[kueue.ClusterQueueReference]schdcache.DRS)
+	for cand := range ordering.Iter() {
+		if cand.InClusterQueuePreemption() {
+			ordering.DropQueue(cand)
+			continue
+		}
+		candClusterQueueName := cand.GetTargetCq().GetName()
+		_, candDRS := cand.ComputeShares()
+		candCQs[candClusterQueueName] = cand
+		candDRSBefore[candClusterQueueName] = schdcache.DRS(candDRS)
+		ordering.DropQueue(cand)
+	}
+
 	fits, targets, retryCandidates := runFirstFsStrategy(preemptionCtx, candidates, strategies[0])
 
 	if features.Enabled(features.FairSharingReevaluatePreemptionCandidates) {
@@ -592,7 +608,47 @@ func (p *Preemptor) fairPreemptions(preemptionCtx *preemptionCtx, strategies []f
 		return nil
 	}
 	targets = fillBackWorkloads(preemptionCtx, targets, true)
+
+	revertPreemptionUsage := preemptionCtx.preemptorCQ.SimulateUsageAddition(preemptionCtx.workloadUsage)
+	preemptorWithinNominal := features.Enabled(features.FairSharingPreemptWithinNominal) &&
+		queueWithinNominalInResourcesNeedingPreemption(preemptionCtx)
+	valid := true
+	for _, target := range targets {
+		cand, ok := candCQs[target.WorkloadInfo.ClusterQueue]
+		if !ok {
+			// Same-CQ preemption (InClusterQueueReason)
+			continue
+		}
+		if preemptorWithinNominal {
+			continue
+		}
+		preemptorDRSAfter, targetDRSAfter := cand.ComputeShares()
+		targetDRSBefore := candDRSBefore[target.WorkloadInfo.ClusterQueue]
+		// A target is valid if it satisfies at least one configured FairSharing strategy
+		// (e.g., LessThanOrEqualToFinalShare: preemptorDRSAfter <= targetDRSAfter,
+		//  or LessThanInitialShare:           preemptorDRSAfter <  targetDRSBefore).
+		strategyPassed := false
+		for _, strategy := range strategies {
+			if strategy(
+				preemptorDRSAfter,
+				fairsharing.TargetOldShare(targetDRSBefore),
+				fairsharing.TargetNewShare(targetDRSAfter),
+			) {
+				strategyPassed = true
+				break
+			}
+		}
+		if !strategyPassed {
+			valid = false
+			break
+		}
+	}
+	revertPreemptionUsage()
+
 	restoreSnapshot(preemptionCtx.snapshot, targets)
+	if !valid {
+		return nil
+	}
 
 	if logV := preemptionCtx.log.V(6); logV.Enabled() {
 		logV.Info("Fair sharing strategies succeeded",
