@@ -946,6 +946,36 @@ func TestFairPreemptions(t *testing.T) {
 			targetCQ:      "a",
 			wantPreempted: sets.New(targetKeyReason("/b_prem1", kueue.InCohortReclamationReason)),
 		},
+		"intra-CQ candidate would temporarily lower preemptor DRS to preempt cross-CQ workload": {
+			strategies: []config.PreemptionStrategy{config.LessThanOrEqualToFinalShare, config.LessThanInitialShare},
+			clusterQueues: []*kueue.ClusterQueue{
+				utiltestingapi.MakeClusterQueue("qp").
+					Cohort("all").
+					ResourceGroup(*utiltestingapi.MakeFlavorQuotas("default").
+						Resource(corev1.ResourceCPU, "50").Obj()).
+					Preemption(kueue.ClusterQueuePreemption{
+						WithinClusterQueue:  kueue.PreemptionPolicyLowerOrNewerEqualPriority,
+						ReclaimWithinCohort: kueue.PreemptionPolicyAny,
+					}).
+					Obj(),
+				utiltestingapi.MakeClusterQueue("qt").
+					Cohort("all").
+					ResourceGroup(*utiltestingapi.MakeFlavorQuotas("default").
+						Resource(corev1.ResourceCPU, "50").Obj()).
+					Preemption(kueue.ClusterQueuePreemption{
+						WithinClusterQueue:  kueue.PreemptionPolicyLowerOrNewerEqualPriority,
+						ReclaimWithinCohort: kueue.PreemptionPolicyAny,
+					}).
+					Obj(),
+			},
+			admitted: []kueue.Workload{
+				*utiltestingapi.MakeWorkload("p_small", "ns").Request(corev1.ResourceCPU, "30").Priority(0).Creation(now).SimpleReserveQuota("qp", "default", now).Obj(),
+				*utiltestingapi.MakeWorkload("t_hero", "ns").Request(corev1.ResourceCPU, "70").Priority(0).Creation(now).SimpleReserveQuota("qt", "default", now).Obj(),
+			},
+			incoming:      utiltestingapi.MakeWorkload("p_hero", "ns").Request(corev1.ResourceCPU, "60").Priority(10).Creation(now.Add(-time.Hour)).Obj(),
+			targetCQ:      "qp",
+			wantPreempted: nil,
+		},
 		// The preemptor has a fair weight of 0 and borrows, so its share is
 		// +Inf. The target borrows on a non-zero weight, so its share is
 		// finite. CompareDRS ranks the preemptor above the target no matter
