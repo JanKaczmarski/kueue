@@ -80,6 +80,7 @@ type preemptionCtx struct {
 	log               logr.Logger
 	preemptor         workload.Info
 	preemptorCQ       *schdcache.ClusterQueueSnapshot
+	preemptorShares   fairsharing.PreemptorShares
 	snapshot          *schdcache.Snapshot
 	workloadUsage     workload.Usage
 	tasRequests       schdcache.WorkloadTASRequests
@@ -382,6 +383,7 @@ func parseStrategies(fs *config.FairSharing) []fairsharing.Strategy {
 // used if rule S2-b is configured.
 func runFirstFsStrategy(preemptionCtx *preemptionCtx, candidates []*workload.Info, strategy fairsharing.Strategy) (bool, []*Target, []*workload.Info) {
 	ordering := fairsharing.MakeClusterQueueOrdering(preemptionCtx.preemptorCQ, candidates, preemptionCtx.log, preemptionCtx.clock)
+	ordering.UsePreemptorShares(preemptionCtx.preemptorShares)
 
 	var targets []*Target
 	var retryCandidates []*workload.Info
@@ -499,6 +501,7 @@ func fsStrategyUnsatisfiable(preemptorNewShare fairsharing.PreemptorNewShare, ta
 // (fits, targets).
 func runSecondFsStrategy(retryCandidates []*workload.Info, preemptionCtx *preemptionCtx, targets []*Target) (bool, []*Target) {
 	ordering := fairsharing.MakeClusterQueueOrdering(preemptionCtx.preemptorCQ, retryCandidates, preemptionCtx.log, preemptionCtx.clock)
+	ordering.UsePreemptorShares(preemptionCtx.preemptorShares)
 	for candCQ := range ordering.Iter() {
 		preemptorNewShare, targetOldShare := candCQ.ComputeShares()
 		passed := fairsharing.LessThanInitialShare(preemptorNewShare, targetOldShare, fairsharing.TargetNewShare{})
@@ -554,7 +557,9 @@ func (p *Preemptor) fairPreemptions(preemptionCtx *preemptionCtx, strategies []f
 
 	// DRS values must include incoming workload.
 	revertSimulation := preemptionCtx.preemptorCQ.SimulateUsageAddition(preemptionCtx.workloadUsage)
+	preemptionCtx.preemptorShares = fairsharing.SnapshotPreemptorShares(preemptionCtx.preemptorCQ)
 
+	// TODO: strategies is strange construciton as we discard strategies[1] entirely it's used only for running 2nd strategy
 	fits, targets, retryCandidates := runFirstFsStrategy(preemptionCtx, candidates, strategies[0])
 
 	if features.Enabled(features.FairSharingReevaluatePreemptionCandidates) {
