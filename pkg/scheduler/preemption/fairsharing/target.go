@@ -46,13 +46,17 @@ func (t *TargetClusterQueue) HasWorkload() bool {
 	return t.ordering.hasWorkload(t.targetCq)
 }
 
-// ComputeShares computes the DominantResourceShares of the premptor
-// and target ClusterQueues' AlmostLeastCommonAncestors. These shares
-// do not depend on the removal of the workload being considered for
-// preemption.
+// ComputeShares computes the DominantResourceShares of the preemptor
+// and target ClusterQueues' AlmostLeastCommonAncestors. The preemptor's
+// share is looked up from t.ordering.preemptorShares (locked before candidate
+// removals) while the target's share is computed from the current snapshot.
 func (t *TargetClusterQueue) ComputeShares() (PreemptorNewShare, TargetOldShare) {
 	preemptorAlmostLCA, targetAlmostLCA := getAlmostLCAs(t)
-	return PreemptorNewShare(preemptorAlmostLCA.DominantResourceShare()), TargetOldShare(targetAlmostLCA.DominantResourceShare())
+	preemptorShare, ok := t.ordering.preemptorShares[preemptorAlmostLCA]
+	if !ok {
+		preemptorShare = PreemptorNewShare(preemptorAlmostLCA.DominantResourceShare())
+	}
+	return preemptorShare, TargetOldShare(targetAlmostLCA.DominantResourceShare())
 }
 
 // ComputeTargetShareAfterRemoval returns DominantResourceShare of the

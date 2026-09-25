@@ -23,6 +23,21 @@ type almostLCA interface {
 	DominantResourceShare() schdcache.DRS
 }
 
+// PreemptorShares holds the locked DominantResourceShares of the preemptor
+// ClusterQueue and its ancestor Cohorts before any candidate workloads are removed.
+type PreemptorShares map[almostLCA]PreemptorNewShare
+
+// SnapshotPreemptorShares computes and stores the DominantResourceShare of the
+// preemptor ClusterQueue and every Cohort on its path to the root.
+func SnapshotPreemptorShares(preemptorCq *schdcache.ClusterQueueSnapshot) PreemptorShares {
+	shares := make(PreemptorShares)
+	shares[preemptorCq] = PreemptorNewShare(preemptorCq.DominantResourceShare())
+	for ancestor := range preemptorCq.PathParentToRoot() {
+		shares[ancestor] = PreemptorNewShare(ancestor.DominantResourceShare())
+	}
+	return shares
+}
+
 // getAlmostLCAs returns almostLCAs of (preemptor, target).
 func getAlmostLCAs(t *TargetClusterQueue) (almostLCA, almostLCA) {
 	lca := getLCA(t)

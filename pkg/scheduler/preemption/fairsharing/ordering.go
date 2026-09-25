@@ -48,6 +48,7 @@ type TargetClusterQueueOrdering struct {
 	preemptorCq *schdcache.ClusterQueueSnapshot
 	// ancestor Cohorts of the preemptor ClusterQueue.
 	preemptorAncestors sets.Set[*schdcache.CohortSnapshot]
+	preemptorShares    PreemptorShares
 
 	clusterQueueToTarget map[kueue.ClusterQueueReference][]*workload.Info
 
@@ -67,6 +68,7 @@ func MakeClusterQueueOrdering(cq *schdcache.ClusterQueueSnapshot, candidates []*
 
 		preemptorCq:        cq,
 		preemptorAncestors: sets.New[*schdcache.CohortSnapshot](),
+		preemptorShares:    SnapshotPreemptorShares(cq),
 
 		clusterQueueToTarget: make(map[kueue.ClusterQueueReference][]*workload.Info),
 
@@ -84,6 +86,13 @@ func MakeClusterQueueOrdering(cq *schdcache.ClusterQueueSnapshot, candidates []*
 	}
 
 	return t
+}
+
+// UsePreemptorShares overrides the preemptor shares with a pre-captured snapshot.
+func (t *TargetClusterQueueOrdering) UsePreemptorShares(shares PreemptorShares) {
+	if len(shares) > 0 {
+		t.preemptorShares = shares
+	}
 }
 
 func (t *TargetClusterQueueOrdering) Iter() iter.Seq[*TargetClusterQueue] {
