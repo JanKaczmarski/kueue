@@ -159,9 +159,9 @@ func SetupControllers(mgr ctrl.Manager, namespace string, opts ...SetupOption) e
 		cpAccessProvider = &NoOpClusterProfileAccessProvider{}
 	}
 
-	cRec := newClustersReconciler(
-		mgr.GetClient(),
-		namespace,
+	capacityProviderEnabled := features.Enabled(features.MultiKueueManagerQuotaAutomation) && features.Enabled(features.DynamicQuotaOrchestration)
+
+	clusterOpts := []clustersReconcilerOption{
 		withGCInterval(options.gcInterval),
 		withOrigin(options.origin),
 		withFSWatcher(fsWatcher),
@@ -170,7 +170,11 @@ func SetupControllers(mgr ctrl.Manager, namespace string, opts ...SetupOption) e
 		withRoleTracker(options.roleTracker),
 		withEventRecorder(mgr.GetEventRecorder("multikueue-cluster")),
 		withClientConnection(options.clientConnection),
-	)
+	}
+	if capacityProviderEnabled {
+		clusterOpts = append(clusterOpts, withCapacityProviderEvents())
+	}
+	cRec := newClustersReconciler(mgr.GetClient(), namespace, clusterOpts...)
 	err = cRec.setupWithManager(mgr)
 	if err != nil {
 		return err
@@ -186,6 +190,13 @@ func SetupControllers(mgr ctrl.Manager, namespace string, opts ...SetupOption) e
 		cqRec := newCQReconciler(mgr.GetClient(), helper, cRec, options.roleTracker, options.eventsBatchPeriod)
 		err = cqRec.setupWithManager(mgr)
 		if err != nil {
+			return err
+		}
+	}
+
+	if capacityProviderEnabled {
+		cpRec := newCPReconciler(mgr.GetClient(), cRec, options.roleTracker, options.eventsBatchPeriod)
+		if err := cpRec.setupWithManager(mgr); err != nil {
 			return err
 		}
 	}

@@ -171,6 +171,7 @@ type remoteClient struct {
 	wlUpdateCh   chan<- event.GenericEvent
 	watchEndedCh chan<- event.GenericEvent
 	cqUpdateCh   chan<- event.TypedGenericEvent[kueue.ClusterQueueReference]
+	cpUpdateCh   chan<- event.TypedGenericEvent[kueue.ClusterQueueReference]
 	watchCancel  func()
 	watchers     sync.WaitGroup
 	config       *clientConfig
@@ -571,7 +572,8 @@ func (rc *remoteClient) startQueueWatchers(ctx context.Context) error {
 		UpdateFunc: func(oldObj, newObj any) {
 			oldCQ, ok1 := oldObj.(*kueue.ClusterQueue)
 			newCQ, ok2 := newObj.(*kueue.ClusterQueue)
-			if ok1 && ok2 && !equality.Semantic.DeepEqual(oldCQ.Spec.ResourceGroups, newCQ.Spec.ResourceGroups) {
+			if ok1 && ok2 && (!equality.Semantic.DeepEqual(oldCQ.Spec.ResourceGroups, newCQ.Spec.ResourceGroups) ||
+				!equality.Semantic.DeepEqual(oldCQ.Status.EffectiveQuotas, newCQ.Status.EffectiveQuotas)) {
 				rc.queueEventsForCQ(ctx, newCQ)
 			}
 		},
@@ -637,6 +639,9 @@ func (rc *remoteClient) queueEventsForLQ(ctx context.Context, remoteLQ *kueue.Lo
 	}
 
 	rc.cqUpdateCh <- event.TypedGenericEvent[kueue.ClusterQueueReference]{Object: localLQ.Spec.ClusterQueue}
+	if rc.cpUpdateCh != nil {
+		rc.cpUpdateCh <- event.TypedGenericEvent[kueue.ClusterQueueReference]{Object: localLQ.Spec.ClusterQueue}
+	}
 }
 
 func (rc *remoteClient) getFailedConnAttempts() uint {
@@ -817,6 +822,8 @@ type clustersReconciler struct {
 	// has ended (connection lost).
 	watchEndedCh chan event.GenericEvent
 	cqUpdateCh   chan event.TypedGenericEvent[kueue.ClusterQueueReference]
+	// cpUpdateCh is nil unless the MultiKueue CapacityProvider controller consumes it.
+	cpUpdateCh chan event.TypedGenericEvent[kueue.ClusterQueueReference]
 
 	// gcInterval - time waiting between two GC runs.
 	gcInterval time.Duration
@@ -900,6 +907,7 @@ func (c *clustersReconciler) findOrCreateRemoteClient(clusterName, origin string
 	client, found := c.remoteClients[clusterName]
 	if !found {
 		client = newRemoteClient(c.localClient, c.wlUpdateCh, c.watchEndedCh, c.cqUpdateCh, origin, clusterName, c.adapters)
+		client.cpUpdateCh = c.cpUpdateCh
 		if c.builderOverride != nil {
 			client.builderOverride = c.builderOverride
 		}
@@ -1285,6 +1293,7 @@ type clustersReconcilerOptions struct {
 	roleTracker                  *roletracker.RoleTracker
 	recorder                     events.EventRecorder
 	clientConnection             *configapi.ClientConnection
+	capacityProviderEvents       bool
 }
 
 type clustersReconcilerOption func(*clustersReconcilerOptions)
@@ -1337,8 +1346,14 @@ func withClientConnection(clientConnection *configapi.ClientConnection) clusters
 	}
 }
 
+func withCapacityProviderEvents() clustersReconcilerOption {
+	return func(o *clustersReconcilerOptions) {
+		o.capacityProviderEvents = true
+	}
+}
+
 func newClustersReconciler(
-	c client.Client,
+	localClient client.Client,
 	namespace string,
 	opts ...clustersReconcilerOption,
 ) *clustersReconciler {
@@ -1351,8 +1366,8 @@ func newClustersReconciler(
 	if options.clusterProfileAccessProvider == nil {
 		options.clusterProfileAccessProvider = &NoOpClusterProfileAccessProvider{}
 	}
-	return &clustersReconciler{
-		localClient:                  c,
+	c := &clustersReconciler{
+		localClient:                  localClient,
 		configNamespace:              namespace,
 		kubeConfigPathPrefix:         defaultKubeConfigPathPrefix,
 		recorder:                     options.recorder,
@@ -1369,6 +1384,10 @@ func newClustersReconciler(
 		roleTracker:                  options.roleTracker,
 		clientConnection:             options.clientConnection,
 	}
+	if options.capacityProviderEvents {
+		c.cpUpdateCh = make(chan event.TypedGenericEvent[kueue.ClusterQueueReference], eventChBufferSize)
+	}
+	return c
 }
 
 func (c *clustersReconciler) logger() logr.Logger {

@@ -25,6 +25,7 @@ integrations:
   - "statefulset"
 featureGates:
   MultiKueueManagerQuotaAutomation: true
+  DynamicQuotaOrchestration: true
 tls:
   minVersion: "VersionTLS12"
   cipherSuites:
