@@ -501,6 +501,9 @@ const (
 	// kep: https://github.com/kubernetes-sigs/kueue/tree/main/keps/9988-multikueue-manager-quota-automation
 	//
 	// Enables MultiKueue manager quota automation support.
+	//
+	// TODO(#17401): KEP-17401 removes the Alpha1 code and keeps this gate without effect.
+	// Review of KEP-17401 suggests to drop this gate instead.
 	MultiKueueManagerQuotaAutomation featuregate.Feature = "MultiKueueManagerQuotaAutomation"
 
 	// owner: @ivnovakov
@@ -908,6 +911,13 @@ const (
 	// Verifies fair sharing preemption targets after fillBackWorkloads
 	// to prevent preemption loops caused by temporary share deflation.
 	FairSharingVerifyFinalTargets featuregate.Feature = "FairSharingVerifyFinalTargets"
+
+	// owner: @JanKaczmarski
+	// kep: https://github.com/kubernetes-sigs/kueue/tree/main/keps/17401-multikueue-capacity-provider
+	//
+	// Enables the built-in MultiKueue CapacityProvider, which publishes the sum of the
+	// quotas of the related worker ClusterQueues for Dynamic Quota Orchestration.
+	MultiKueueCapacityProvider featuregate.Feature = "MultiKueueCapacityProvider"
 )
 
 func init() {
@@ -951,6 +961,7 @@ var defaultFeatureGateDependencies = map[featuregate.Feature][]featuregate.Featu
 	ElasticJobsViaWorkloadSlicesForProvisioningRequests: {ElasticJobsViaWorkloadSlices},
 	SchedulerLibraryIntegration:                         {TopologyAwareScheduling},
 	SchedulerLibraryDeepIntegration:                     {SchedulerLibraryIntegration},
+	MultiKueueCapacityProvider:                          {MultiKueue, DynamicQuotaOrchestration},
 }
 
 // defaultVersionedFeatureGates consists of all known Kueue-specific feature keys.
@@ -1403,6 +1414,10 @@ var defaultVersionedFeatureGates = map[featuregate.Feature]featuregate.Versioned
 
 	PodIntegrationVerifyRoleRequests: {
 		{Version: version.MustParse("0.21"), Default: true, PreRelease: featuregate.Beta},
+	},
+
+	MultiKueueCapacityProvider: {
+		{Version: version.MustParse("0.21"), Default: false, PreRelease: featuregate.Alpha},
 	},
 }
 

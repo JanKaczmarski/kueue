@@ -171,6 +171,7 @@ type remoteClient struct {
 	wlUpdateCh   chan<- event.GenericEvent
 	watchEndedCh chan<- event.GenericEvent
 	cqUpdateCh   chan<- event.TypedGenericEvent[kueue.ClusterQueueReference]
+	cpUpdateCh   chan<- event.TypedGenericEvent[kueue.ClusterQueueReference] // for the MultiKueue CapacityProvider
 	watchCancel  func()
 	watchers     sync.WaitGroup
 	config       *clientConfig
@@ -282,7 +283,7 @@ func newClientWithWatch(ctx context.Context, config *clientConfig, options clien
 		return nil, err
 	}
 
-	if !features.Enabled(features.MultiKueueManagerQuotaAutomation) {
+	if !watchWorkerQueues() {
 		return NewNeverCachingClient(directClient), nil
 	}
 
@@ -412,7 +413,7 @@ func (rc *remoteClient) updateConfigAndRefreshWatchers(watchCtx context.Context,
 		}
 		startWatcherCallbacks = append(startWatcherCallbacks, startWatcher)
 	}
-	if features.Enabled(features.MultiKueueManagerQuotaAutomation) {
+	if watchWorkerQueues() {
 		if err := rc.startQueueWatchers(watchCtx); err != nil {
 			return rc.increaseFailedConnAttempt(), err
 		}
@@ -571,7 +572,9 @@ func (rc *remoteClient) startQueueWatchers(ctx context.Context) error {
 		UpdateFunc: func(oldObj, newObj any) {
 			oldCQ, ok1 := oldObj.(*kueue.ClusterQueue)
 			newCQ, ok2 := newObj.(*kueue.ClusterQueue)
-			if ok1 && ok2 && !equality.Semantic.DeepEqual(oldCQ.Spec.ResourceGroups, newCQ.Spec.ResourceGroups) {
+			// The MultiKueue CapacityProvider reads status.effectiveQuotas of the worker ClusterQueues when it is present.
+			if ok1 && ok2 && (!equality.Semantic.DeepEqual(oldCQ.Spec.ResourceGroups, newCQ.Spec.ResourceGroups) ||
+				!equality.Semantic.DeepEqual(oldCQ.Status.EffectiveQuotas, newCQ.Status.EffectiveQuotas)) {
 				rc.queueEventsForCQ(ctx, newCQ)
 			}
 		},
@@ -636,7 +639,20 @@ func (rc *remoteClient) queueEventsForLQ(ctx context.Context, remoteLQ *kueue.Lo
 		return
 	}
 
-	rc.cqUpdateCh <- event.TypedGenericEvent[kueue.ClusterQueueReference]{Object: localLQ.Spec.ClusterQueue}
+	// Only send to the channels that have a consumer, so that a full channel does not block the watch.
+	cqEvent := event.TypedGenericEvent[kueue.ClusterQueueReference]{Object: localLQ.Spec.ClusterQueue}
+	if features.Enabled(features.MultiKueueManagerQuotaAutomation) {
+		rc.cqUpdateCh <- cqEvent
+	}
+	if features.Enabled(features.MultiKueueCapacityProvider) {
+		rc.cpUpdateCh <- cqEvent
+	}
+}
+
+// watchWorkerQueues reports whether the manager caches and watches the ClusterQueues
+// and LocalQueues of the worker clusters, to find the related worker ClusterQueues.
+func watchWorkerQueues() bool {
+	return features.Enabled(features.MultiKueueManagerQuotaAutomation) || features.Enabled(features.MultiKueueCapacityProvider)
 }
 
 func (rc *remoteClient) getFailedConnAttempts() uint {
@@ -817,6 +833,7 @@ type clustersReconciler struct {
 	// has ended (connection lost).
 	watchEndedCh chan event.GenericEvent
 	cqUpdateCh   chan event.TypedGenericEvent[kueue.ClusterQueueReference]
+	cpUpdateCh   chan event.TypedGenericEvent[kueue.ClusterQueueReference]
 
 	// gcInterval - time waiting between two GC runs.
 	gcInterval time.Duration
@@ -905,6 +922,7 @@ func (c *clustersReconciler) findOrCreateRemoteClient(clusterName, origin string
 	client, found := c.remoteClients[clusterName]
 	if !found {
 		client = newRemoteClient(c.localClient, c.wlUpdateCh, c.watchEndedCh, c.cqUpdateCh, origin, clusterName, c.adapters)
+		client.cpUpdateCh = c.cpUpdateCh
 		if c.builderOverride != nil {
 			client.builderOverride = c.builderOverride
 		}
@@ -1372,6 +1390,7 @@ func newClustersReconciler(
 		wlUpdateCh:                   make(chan event.GenericEvent, eventChBufferSize),
 		watchEndedCh:                 make(chan event.GenericEvent, eventChBufferSize),
 		cqUpdateCh:                   make(chan event.TypedGenericEvent[kueue.ClusterQueueReference], eventChBufferSize),
+		cpUpdateCh:                   make(chan event.TypedGenericEvent[kueue.ClusterQueueReference], eventChBufferSize),
 		gcInterval:                   options.gcInterval,
 		origin:                       options.origin,
 		fsWatcher:                    options.fsWatcher,

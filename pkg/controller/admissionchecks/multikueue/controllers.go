@@ -194,10 +194,19 @@ func SetupControllers(mgr ctrl.Manager, namespace string, opts ...SetupOption) e
 		return err
 	}
 
+	// TODO(#17401): remove the KEP-9988 Alpha1 quota automation from this reconciler. The MultiKueue
+	// CapacityProvider replaces it, and KEP-17401 keeps this feature gate without effect.
 	if features.Enabled(features.MultiKueueManagerQuotaAutomation) {
 		cqRec := newCQReconciler(mgr.GetClient(), helper, cRec, options.roleTracker, options.eventsBatchPeriod)
 		err = cqRec.setupWithManager(mgr)
 		if err != nil {
+			return err
+		}
+	}
+
+	if features.Enabled(features.MultiKueueCapacityProvider) {
+		cpRec := newCapacityProviderReconciler(mgr.GetClient(), helper, cRec, options.roleTracker, options.eventsBatchPeriod)
+		if err := cpRec.setupWithManager(mgr); err != nil {
 			return err
 		}
 	}

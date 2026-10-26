@@ -106,6 +106,10 @@ func (r *cqReconciler) Reconcile(ctx context.Context, req reconcile.Request) (re
 		return reconcile.Result{}, err
 	}
 
+	// TODO(#17401): remove the Alpha1 quota automation below (KEP-17401, "Upgrade from KEP-9988 Alpha1").
+	// Kueue ignores MultiKueueConfig.spec.quotaManagement, which stays as a deprecated field,
+	// and does not set the deprecated MultiKueueManagerQuotaAutomation condition.
+	// Review of KEP-17401 suggests to drop the condition type instead.
 	cfg, err := r.helper.ConfigFromRef(ctx, ac.Spec.Parameters)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
@@ -155,6 +159,8 @@ func (r *cqReconciler) Reconcile(ctx context.Context, req reconcile.Request) (re
 
 	if !equality.Semantic.DeepEqual(singleFlavor.Resources, newResources) {
 		singleFlavor.Resources = newResources
+		// TODO(#17401): when this spec update is removed, re-evaluate dropping the RBAC
+		// to update ClusterQueues, if no other feature needs it.
 		if err := r.client.Update(ctx, cq); err != nil {
 			return reconcile.Result{}, fmt.Errorf("updating ClusterQueue nominal quotas: %w", err)
 		}
